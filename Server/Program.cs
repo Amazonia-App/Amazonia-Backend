@@ -269,10 +269,10 @@ using (var scope = app.Services.CreateScope())
     app.UseSwagger();
     app.UseSwaggerUI();
 // }
-else
-{
-    app.UseHttpsRedirection();
-}
+// else
+// {
+//     app.UseHttpsRedirection();
+// }
 
 app.UseCors("AllowNextJs");
 app.UseStaticFiles();
