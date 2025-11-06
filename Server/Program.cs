@@ -99,9 +99,8 @@ builder.WebHost.ConfigureKestrel(options =>
     }
     else
     {
-        // Production: HTTP on port 5000
-        var httpPort = 8080;
-        options.ListenLocalhost(httpPort, listenOptions =>
+        // PRODUCTION: luister op alles (Docker-proof)
+        options.ListenAnyIP(8080, listenOptions =>
         {
             listenOptions.Protocols = HttpProtocols.Http1AndHttp2;
         });
