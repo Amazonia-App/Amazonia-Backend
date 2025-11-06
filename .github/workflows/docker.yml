@@ -1,7 +1,11 @@
 name: Build & Push
 on:
   push:
-    branches: [ Rebase ]
+    branches: [ main ]
+
+permissions:
+  contents: read
+  packages: write
 
 jobs:
   build:
