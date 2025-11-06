@@ -1,7 +1,7 @@
 name: Build & Push
 on:
   push:
-    branches: [ rebase ]
+    branches: [ Rebase ]
 
 jobs:
   build:
