@@ -119,3 +119,4 @@ Thumbs.db
 ## server app config files
 Server/appsettings.json
 Server/appsettings.Development.json
+Server/appsettings.json
