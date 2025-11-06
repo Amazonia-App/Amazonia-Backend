@@ -115,3 +115,7 @@ certs/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+## server app config files
+Server/appsettings.json
+Server/appsettings.Development.json
