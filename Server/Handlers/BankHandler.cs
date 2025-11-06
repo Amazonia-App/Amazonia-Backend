@@ -1,12 +1,11 @@
-using Core.Interfaces;
-using Core.Models;
+using AmazoniaApi.Core.Interfaces;
+using AmazoniaApi.Core.Models;
+using AmazoniaApi.Server.DBContext;
 using Microsoft.AspNetCore.Identity;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Mvc;
-using Server.DBContext;
-using Server.DTOModels;
+using Microsoft.EntityFrameworkCore;
 
-namespace Server.Handlers;
+namespace AmazoniaApi.Server.Handlers;
 
 public class BankHandler(
     UserManager<AppUser> userManager, 

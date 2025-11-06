@@ -1,13 +1,11 @@
-using System.Security.Claims;
-using Core.Models;
+using AmazoniaApi.Core.Models;
+using AmazoniaApi.Server.DTOModels;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using Server.DTOModels;
 
-namespace Server.Controllers
+namespace AmazoniaApi.Server.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]

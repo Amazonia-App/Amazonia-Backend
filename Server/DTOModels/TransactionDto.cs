@@ -1,6 +1,6 @@
-using Core.Models;
+using AmazoniaApi.Core.Models;
 
-namespace Server.DTOModels;
+namespace AmazoniaApi.Server.DTOModels;
 
 public class TransactionDto
 {

@@ -2,7 +2,7 @@ using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using Microsoft.AspNetCore.Identity;
 
-namespace Core.Models;
+namespace AmazoniaApi.Core.Models;
 
 public class AppUser : IdentityUser
 {

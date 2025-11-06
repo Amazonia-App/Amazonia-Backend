@@ -1,9 +1,9 @@
-using Core.Interfaces;
-using Core.Models;
+using AmazoniaApi.Core.Interfaces;
+using AmazoniaApi.Core.Models;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
-namespace Server.Handlers;
+namespace AmazoniaApi.Server.Handlers;
 
 public class AccountHandler(UserManager<AppUser> userManager, IHelperMethods helperMethods) : IAccountHandler
 {

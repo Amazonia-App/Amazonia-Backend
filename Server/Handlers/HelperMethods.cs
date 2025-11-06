@@ -1,9 +1,9 @@
 using System.Security.Claims;
-using Core.Interfaces;
-using Core.Models;
+using AmazoniaApi.Core.Interfaces;
+using AmazoniaApi.Core.Models;
 using Microsoft.AspNetCore.Identity;
 
-namespace Server.Handlers;
+namespace AmazoniaApi.Server.Handlers;
 
 public class HelperMethods(ClaimsPrincipal user, UserManager<AppUser> userManager) : IHelperMethods
 {

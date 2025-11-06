@@ -1,4 +1,4 @@
-namespace Server.DTOModels;
+namespace AmazoniaApi.Server.DTOModels;
 
 public class PagedResult<T>
 {

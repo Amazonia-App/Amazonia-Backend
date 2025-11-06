@@ -1,0 +1,13 @@
+{
+  "name": "amazonia-api",
+  "version": "1.0.0",
+  "description": "Amazonia API - ASP.NET Core project",
+  "scripts": {
+    "dev": "dotnet run --project Server/Server.csproj --launch-profile https",
+    "dev:http": "dotnet run --project Server/Server.csproj --launch-profile http",
+    "build": "dotnet build",
+    "restore": "dotnet restore",
+    "watch": "dotnet watch --project Server/Server.csproj --launch-profile https"
+  }
+}
+

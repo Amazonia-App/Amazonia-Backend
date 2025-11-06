@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace Core.Models;
+namespace AmazoniaApi.Core.Models;
 
 public class Ticket
 {

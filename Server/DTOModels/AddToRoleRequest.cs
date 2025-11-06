@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace Server.DTOModels;
+namespace AmazoniaApi.Server.DTOModels;
 
 public class AddToRoleRequest
 {

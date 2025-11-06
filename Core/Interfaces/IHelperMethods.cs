@@ -1,6 +1,6 @@
-using Core.Models;
+using AmazoniaApi.Core.Models;
 
-namespace Core.Interfaces;
+namespace AmazoniaApi.Core.Interfaces;
 
 public interface IHelperMethods
 { 

@@ -1,7 +1,7 @@
-using Core.Models;
+using AmazoniaApi.Core.Models;
 using Microsoft.AspNetCore.Identity;
 
-namespace Server.Seeders;
+namespace AmazoniaApi.Server.Seeders;
 
 public class RoleSeeder(RoleManager<IdentityRole> roleManager)
 {

@@ -1,6 +1,7 @@
-namespace Core.Interfaces;
+using AmazoniaApi.Core.Models;
 
-using Core.Models;
+namespace AmazoniaApi.Core.Interfaces;
+
 public interface IBankHandler
 {
     public Task<decimal> GetBalanceAsync();

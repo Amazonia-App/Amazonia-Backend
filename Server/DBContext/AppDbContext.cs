@@ -1,8 +1,8 @@
-using Core.Models;
+using AmazoniaApi.Core.Models;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
-namespace Server.DBContext;
+namespace AmazoniaApi.Server.DBContext;
 
 public class AppDbContext(DbContextOptions<AppDbContext> options) : IdentityDbContext<AppUser>(options)
 {

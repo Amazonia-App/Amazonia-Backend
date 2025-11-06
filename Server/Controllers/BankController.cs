@@ -1,10 +1,10 @@
-using Core.Interfaces;
-using Core.Models;
+using AmazoniaApi.Core.Interfaces;
+using AmazoniaApi.Core.Models;
+using AmazoniaApi.Server.DTOModels;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Server.DTOModels;
 
-namespace Server.Controllers;
+namespace AmazoniaApi.Server.Controllers;
 
 [Authorize]
 [Route("api/[controller]")]

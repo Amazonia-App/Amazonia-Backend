@@ -1,13 +1,13 @@
 using System.Security.Claims;
-using Core.Interfaces;
-using Core.Models;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
-using Server.DBContext;
-using Server.Seeders;
-using Server.Handlers;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using System.Security.Cryptography.X509Certificates;
+using AmazoniaApi.Core.Interfaces;
+using AmazoniaApi.Core.Models;
+using AmazoniaApi.Server.DBContext;
+using AmazoniaApi.Server.Handlers;
+using AmazoniaApi.Server.Seeders;
 
 var builder = WebApplication.CreateBuilder(args);
 

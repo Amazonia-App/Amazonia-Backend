@@ -1,4 +1,4 @@
-namespace Core.Models;
+namespace AmazoniaApi.Core.Models;
 
 public enum TicketStatus
 {

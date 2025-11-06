@@ -1,8 +1,6 @@
-using System.Collections.Generic;
-using System.Linq;
-using Core.Models;
+using AmazoniaApi.Core.Models;
 
-namespace Server.DTOModels;
+namespace AmazoniaApi.Server.DTOModels;
 
 public class AppUserDto(AppUser appUser, IEnumerable<string>? roles = null)
 {
