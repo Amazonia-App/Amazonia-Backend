@@ -102,4 +102,17 @@ public class TicketController(AppDbContext context, IHelperMethods helperMethods
 
         return Ok(ticket);
     }
+
+    //get all tickets for a selected user
+    [HttpGet("GetTicketsForUser")]
+    public async Task<IActionResult> GetTicketsForUser([FromQuery] string userId)
+    {
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        var tickets = await context.Tickets.Where(t => t.CreatorId == userId).ToListAsync();
+        return Ok(tickets);
+    }
 }
