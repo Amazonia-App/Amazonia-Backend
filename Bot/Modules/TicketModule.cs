@@ -17,6 +17,10 @@ public sealed class TicketModule : InteractionModuleBase<SocketInteractionContex
     private readonly TicketChannelCache _ticketChannelCache;
     private readonly ChannelPermissionManager _permissionManager;
     private readonly ILogger<TicketModule> _logger;
+    
+    // Track interactions currently being processed to prevent duplicate execution
+    private static readonly HashSet<ulong> _processingInteractions = new();
+    private static readonly object _processingInteractionsLock = new();
 
     public TicketModule(
         ApiClient apiClient,
@@ -62,8 +66,25 @@ public sealed class TicketModule : InteractionModuleBase<SocketInteractionContex
     /// </summary>
     public async Task CreateTicketInternalAsync(SocketInteractionContext context)
     {
-        // Temporarily store original context if needed
-        var originalContext = Context;
+        // Check if this interaction is already being processed
+        bool alreadyProcessing = false;
+        lock (_processingInteractionsLock)
+        {
+            if (_processingInteractions.Contains(context.Interaction.Id))
+            {
+                alreadyProcessing = true;
+                _logger.LogWarning("CreateTicketInternalAsync already processing interaction {InteractionId}, skipping duplicate execution.", context.Interaction.Id);
+            }
+            else
+            {
+                _processingInteractions.Add(context.Interaction.Id);
+            }
+        }
+        
+        if (alreadyProcessing)
+        {
+            return;
+        }
         
         try
         {
@@ -309,6 +330,14 @@ public sealed class TicketModule : InteractionModuleBase<SocketInteractionContex
             {
                 // Last resort - can't respond
                 _logger.LogCritical("Could not send any response to user after critical error");
+            }
+        }
+        finally
+        {
+            // Remove from processing set when done
+            lock (_processingInteractionsLock)
+            {
+                _processingInteractions.Remove(context.Interaction.Id);
             }
         }
     }

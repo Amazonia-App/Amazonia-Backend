@@ -24,6 +24,10 @@ public class DiscordBotService : BackgroundService
     // Track processed interactions to prevent duplicate processing
     private readonly HashSet<ulong> _processedInteractions = new();
     private readonly object _processedInteractionsLock = new();
+    
+    // Track interactions that are currently being executed to prevent duplicate execution
+    private readonly HashSet<ulong> _executingInteractions = new();
+    private readonly object _executingInteractionsLock = new();
 
     private readonly TaskCompletionSource<bool> _readyCompletionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -280,52 +284,103 @@ public class DiscordBotService : BackgroundService
             _logger.LogInformation("Command execution result: {Success} {Error} {Reason} for interaction {InteractionId}",
                 result.IsSuccess, result.Error, result.ErrorReason, interaction.Id);
             
-            // If result is success but method didn't execute (no response), manually invoke it
-            if (result.IsSuccess && !interaction.HasResponded && commandName == "open-ticket")
+            // Mark this interaction as executing
+            bool isExecuting = false;
+            lock (_executingInteractionsLock)
             {
-                _logger.LogWarning("Command {CommandName} reported success but interaction {InteractionId} has not been responded to. Manually invoking method as fallback.", commandLogName, interaction.Id);
-                
-                try
+                if (!_executingInteractions.Contains(interaction.Id))
                 {
-                    // Manually resolve and invoke the internal method directly with context
-                    var ticketModule = scope.ServiceProvider.GetService<TicketModule>();
-                    if (ticketModule != null)
+                    _executingInteractions.Add(interaction.Id);
+                    isExecuting = true;
+                }
+            }
+            
+            // If result is success but method didn't execute (no response), wait a bit then check again
+            // This gives the async method time to defer before we trigger the fallback
+            if (result.IsSuccess && !interaction.HasResponded && commandName == "open-ticket" && isExecuting)
+            {
+                // Wait a short time to allow the async method to defer
+                await Task.Delay(500);
+                
+                // Check again if interaction has been responded to
+                if (!interaction.HasResponded)
+                {
+                    _logger.LogWarning("Command {CommandName} reported success but interaction {InteractionId} has not been responded to after delay. Manually invoking method as fallback.", commandLogName, interaction.Id);
+                    
+                    try
                     {
-                        // Invoke the internal method directly with the context (no need to set Context property)
-                        var method = typeof(TicketModule).GetMethod("CreateTicketInternalAsync", BindingFlags.Public | BindingFlags.Instance);
-                        if (method != null)
+                        // Manually resolve and invoke the internal method directly with context
+                        var ticketModule = scope.ServiceProvider.GetService<TicketModule>();
+                        if (ticketModule != null)
                         {
-                            _logger.LogInformation("Manually invoking CreateTicketInternalAsync for interaction {InteractionId}", interaction.Id);
-                            // Invoke and handle the task
-                            var task = (Task)method.Invoke(ticketModule, new object[] { context })!;
-                            
-                            // Fire and forget with error handling
-                            _ = Task.Run(async () =>
+                            // Invoke the internal method directly with the context (no need to set Context property)
+                            var method = typeof(TicketModule).GetMethod("CreateTicketInternalAsync", BindingFlags.Public | BindingFlags.Instance);
+                            if (method != null)
                             {
-                                try
+                                _logger.LogInformation("Manually invoking CreateTicketInternalAsync for interaction {InteractionId}", interaction.Id);
+                                // Invoke and handle the task
+                                var task = (Task)method.Invoke(ticketModule, new object[] { context })!;
+                                
+                                // Fire and forget with error handling
+                                _ = Task.Run(async () =>
                                 {
-                                    await task;
-                                }
-                                catch (Exception ex)
+                                    try
+                                    {
+                                        await task;
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        _logger.LogError(ex, "Error in manually invoked CreateTicketInternalAsync for interaction {InteractionId}", interaction.Id);
+                                    }
+                                    finally
+                                    {
+                                        // Remove from executing set when done
+                                        lock (_executingInteractionsLock)
+                                        {
+                                            _executingInteractions.Remove(interaction.Id);
+                                        }
+                                    }
+                                });
+                            }
+                            else
+                            {
+                                _logger.LogError("Could not find CreateTicketInternalAsync method via reflection");
+                                lock (_executingInteractionsLock)
                                 {
-                                    _logger.LogError(ex, "Error in manually invoked CreateTicketInternalAsync for interaction {InteractionId}", interaction.Id);
+                                    _executingInteractions.Remove(interaction.Id);
                                 }
-                            });
+                            }
                         }
                         else
                         {
-                            _logger.LogError("Could not find CreateTicketInternalAsync method via reflection");
+                            _logger.LogError("Could not resolve TicketModule for manual invocation");
+                            lock (_executingInteractionsLock)
+                            {
+                                _executingInteractions.Remove(interaction.Id);
+                            }
                         }
                     }
-                    else
+                    catch (Exception manualInvokeEx)
                     {
-                        _logger.LogError("Could not resolve TicketModule for manual invocation");
+                        _logger.LogError(manualInvokeEx, "Failed to manually invoke CreateTicketAsync for interaction {InteractionId}", interaction.Id);
+                        lock (_executingInteractionsLock)
+                        {
+                            _executingInteractions.Remove(interaction.Id);
+                        }
                     }
                 }
-                catch (Exception manualInvokeEx)
+                else
                 {
-                    _logger.LogError(manualInvokeEx, "Failed to manually invoke CreateTicketAsync for interaction {InteractionId}", interaction.Id);
+                    _logger.LogInformation("Interaction {InteractionId} was responded to after delay, no fallback needed.", interaction.Id);
+                    lock (_executingInteractionsLock)
+                    {
+                        _executingInteractions.Remove(interaction.Id);
+                    }
                 }
+            }
+            else if (!isExecuting)
+            {
+                _logger.LogWarning("Interaction {InteractionId} is already being executed, skipping duplicate execution.", interaction.Id);
             }
             
             // Log detailed result information if it's an ExecuteResult
@@ -343,6 +398,15 @@ public class DiscordBotService : BackgroundService
             if (result.IsSuccess)
             {
                 _logger.LogInformation("Slash command {CommandName} executed successfully. Handler responded: {HasResponded}. ErrorReason={ErrorReason}", commandLogName, interaction.HasResponded, result.ErrorReason ?? "none");
+                
+                // If interaction was responded to, remove from executing set
+                if (interaction.HasResponded)
+                {
+                    lock (_executingInteractionsLock)
+                    {
+                        _executingInteractions.Remove(interaction.Id);
+                    }
+                }
                 
                 // Don't send fallback response here - the module handles its own responses
                 // The async method may still be executing and will handle deferring/responding
