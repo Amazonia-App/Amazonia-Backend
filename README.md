@@ -66,7 +66,7 @@ Step-by-step:
 - Navigate to Discord Developer Portal (`https://discord.com/developers/applications`)
 - Create a new application
 - Navigate to OAuth2 section
-- Add redirect URI: `https://localhost:7087/signin-discord` (or your configured URL)
+- Add redirect URI: `https://localhost:7088/signin-discord` (or your configured URL)
 - Copy Client ID and Client Secret for configuration
 - Required OAuth2 scopes: `identify` and `email`
 
@@ -81,7 +81,7 @@ Copy and update configuration:
   - **ConnectionStrings:DefaultConnection**: Database path (default: `Data Source=Core/SqliteTestServers/app.db`)
   - **Cors:AllowedOrigins**: Array of allowed frontend URLs (e.g., `["http://localhost:3000"]`)
   - **FrontendUrl**: Your frontend application URL
-  - **Kestrel:Endpoints:Https:Url**: HTTPS endpoint URL (default: `https://localhost:7087`)
+  - **Kestrel:Endpoints:Https:Url**: HTTPS endpoint URL (default: `https://localhost:7088`)
   - **Kestrel:Certificates**: Optional SSL certificate paths for local HTTPS
 
 #### 4. Database Setup
@@ -115,8 +115,8 @@ dotnet run
 
 #### 7. Access the Application
 
-- API Base URL: `https://localhost:7087` (HTTPS) or `http://localhost:5041` (HTTP in development)
-- Swagger UI: `https://localhost:7087/swagger` (available in development mode)
+- API Base URL: `https://localhost:7088` (HTTPS) or `http://localhost:5041` (HTTP in development)
+- Swagger UI: `https://localhost:7088/swagger` (available in development mode)
 - All API endpoints are prefixed with `/api`
 
 ### API Documentation

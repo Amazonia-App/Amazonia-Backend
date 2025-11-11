@@ -7,6 +7,8 @@ public class Message
     [Key]
     public int Id { get; set; } // Property, not field
     
+    public ulong? DiscordMessageId { get; set; }
+
     [MaxLength(2000)]
     public string Content { get; set; } = string.Empty; // Use lowercase 'string', add default
     

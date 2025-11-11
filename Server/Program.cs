@@ -8,6 +8,9 @@ using AmazoniaApi.Core.Models;
 using AmazoniaApi.Server.DBContext;
 using AmazoniaApi.Server.Handlers;
 using AmazoniaApi.Server.Seeders;
+using AmazoniaApi.Server.Services;
+
+System.AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -28,6 +31,12 @@ builder.Services.AddLogging(logging =>
 // Configuration
 builder.Configuration.AddEnvironmentVariables();
 builder.Services.AddSingleton<IConfiguration>(builder.Configuration);
+
+var botGrpcUrl = builder.Configuration["Bot:GrpcUrl"];
+if (string.IsNullOrEmpty(botGrpcUrl))
+{
+    throw new InvalidOperationException("Bot:GrpcUrl is not configured. Please set it in appsettings.json or environment variables.");
+}
 
 // CORS - configurable via appsettings
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
@@ -59,31 +68,47 @@ builder.WebHost.ConfigureKestrel(options =>
 {
     if (!string.IsNullOrEmpty(certPath) && !string.IsNullOrEmpty(keyPath))
     {
-        var serverPath = Path.Combine(builder.Environment.ContentRootPath, "..");
-        var fullCertPath = Path.IsPathRooted(certPath) ? certPath : Path.Combine(serverPath, certPath);
-        var fullKeyPath = Path.IsPathRooted(keyPath) ? keyPath : Path.Combine(serverPath, keyPath);
-
-        if (File.Exists(fullCertPath) && File.Exists(fullKeyPath))
+        try
         {
-            var certificate = new X509Certificate2(X509Certificate2.CreateFromPemFile(fullCertPath, fullKeyPath).Export(X509ContentType.Pfx));
-            var httpsUrl = builder.Configuration["Kestrel:Endpoints:Https:Url"] ?? "https://localhost:7087";
-            if (Uri.TryCreate(httpsUrl, UriKind.Absolute, out var httpsUri))
+            var serverPath = Path.Combine(builder.Environment.ContentRootPath, "..");
+            var fullCertPath = Path.IsPathRooted(certPath) ? certPath : Path.Combine(serverPath, certPath);
+            var fullKeyPath = Path.IsPathRooted(keyPath) ? keyPath : Path.Combine(serverPath, keyPath);
+
+            if (File.Exists(fullCertPath) && File.Exists(fullKeyPath))
             {
-                options.ListenLocalhost(httpsUri.Port, listenOptions =>
+                var certificate = X509Certificate2.CreateFromPemFile(fullCertPath, fullKeyPath);
+                certificate = new X509Certificate2(certificate.Export(X509ContentType.Pfx));
+                var httpsUrl = builder.Configuration["Kestrel:Endpoints:Https:Url"] ?? "https://localhost:7088";
+                if (Uri.TryCreate(httpsUrl, UriKind.Absolute, out var httpsUri))
                 {
-                    listenOptions.Protocols = HttpProtocols.Http1AndHttp2;
-                    listenOptions.UseHttps(certificate);
-                });
+                    options.ListenLocalhost(httpsUri.Port, listenOptions =>
+                    {
+                        listenOptions.Protocols = HttpProtocols.Http1AndHttp2;
+                        listenOptions.UseHttps(certificate);
+                    });
+                    return; // If HTTPS configured successfully, skip HTTP fallback
+                }
             }
-            return; // If HTTPS configured, skip HTTP fallback
+            else
+            {
+                Console.WriteLine($"⚠️  TLS certificate not found at '{fullCertPath}' or key at '{fullKeyPath}'. Falling back to development certificate.");
+                builder.WebHost.UseSetting("Kestrel:Certificates:Default:Path", string.Empty);
+                builder.WebHost.UseSetting("Kestrel:Certificates:Default:KeyPath", string.Empty);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"⚠️  Failed to load TLS certificate from configuration. Falling back to development certificate. Reason: {ex.Message}");
+            builder.WebHost.UseSetting("Kestrel:Certificates:Default:Path", string.Empty);
+            builder.WebHost.UseSetting("Kestrel:Certificates:Default:KeyPath", string.Empty);
         }
     }
 
     // Fallback: HTTPS in development, HTTP otherwise
     if (builder.Environment.IsDevelopment())
     {
-        // Use HTTPS with development certificate on port 7087
-        var httpsPort = 7087;
+        // Use HTTPS with development certificate on port 7088
+        var httpsPort = 7088;
         options.ListenLocalhost(httpsPort, listenOptions =>
         {
             listenOptions.Protocols = HttpProtocols.Http1AndHttp2;
@@ -245,6 +270,7 @@ builder.Services.AddScoped<ClaimsPrincipal>(serviceProvider =>
 builder.Services.AddTransient<IHelperMethods, HelperMethods>();
 builder.Services.AddScoped<IAccountHandler, AccountHandler>();
 builder.Services.AddScoped<IBankHandler, BankHandler>();
+builder.Services.AddSingleton<IBotGrpcClient, BotGrpcClient>();
 
 var app = builder.Build();
 
