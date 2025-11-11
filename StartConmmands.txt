@@ -1,0 +1,5 @@
+to run the bot
+dotnet run --project ./Bot/Bot.csproj
+
+to run the api
+dotnet run --project ./Server/Server.csproj

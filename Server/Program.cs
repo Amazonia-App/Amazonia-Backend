@@ -8,6 +8,9 @@ using AmazoniaApi.Core.Models;
 using AmazoniaApi.Server.DBContext;
 using AmazoniaApi.Server.Handlers;
 using AmazoniaApi.Server.Seeders;
+using AmazoniaApi.Server.Services;
+
+System.AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -28,6 +31,12 @@ builder.Services.AddLogging(logging =>
 // Configuration
 builder.Configuration.AddEnvironmentVariables();
 builder.Services.AddSingleton<IConfiguration>(builder.Configuration);
+
+var botGrpcUrl = builder.Configuration["Bot:GrpcUrl"];
+if (string.IsNullOrEmpty(botGrpcUrl))
+{
+    throw new InvalidOperationException("Bot:GrpcUrl is not configured. Please set it in appsettings.json or environment variables.");
+}
 
 // CORS - configurable via appsettings
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
@@ -59,23 +68,39 @@ builder.WebHost.ConfigureKestrel(options =>
 {
     if (!string.IsNullOrEmpty(certPath) && !string.IsNullOrEmpty(keyPath))
     {
-        var serverPath = Path.Combine(builder.Environment.ContentRootPath, "..");
-        var fullCertPath = Path.IsPathRooted(certPath) ? certPath : Path.Combine(serverPath, certPath);
-        var fullKeyPath = Path.IsPathRooted(keyPath) ? keyPath : Path.Combine(serverPath, keyPath);
-
-        if (File.Exists(fullCertPath) && File.Exists(fullKeyPath))
+        try
         {
-            var certificate = new X509Certificate2(X509Certificate2.CreateFromPemFile(fullCertPath, fullKeyPath).Export(X509ContentType.Pfx));
-            var httpsUrl = builder.Configuration["Kestrel:Endpoints:Https:Url"] ?? "https://localhost:7087";
-            if (Uri.TryCreate(httpsUrl, UriKind.Absolute, out var httpsUri))
+            var serverPath = Path.Combine(builder.Environment.ContentRootPath, "..");
+            var fullCertPath = Path.IsPathRooted(certPath) ? certPath : Path.Combine(serverPath, certPath);
+            var fullKeyPath = Path.IsPathRooted(keyPath) ? keyPath : Path.Combine(serverPath, keyPath);
+
+            if (File.Exists(fullCertPath) && File.Exists(fullKeyPath))
             {
-                options.ListenLocalhost(httpsUri.Port, listenOptions =>
+                var certificate = X509Certificate2.CreateFromPemFile(fullCertPath, fullKeyPath);
+                certificate = new X509Certificate2(certificate.Export(X509ContentType.Pfx));
+                var httpsUrl = builder.Configuration["Kestrel:Endpoints:Https:Url"] ?? "https://localhost:7087";
+                if (Uri.TryCreate(httpsUrl, UriKind.Absolute, out var httpsUri))
                 {
-                    listenOptions.Protocols = HttpProtocols.Http1AndHttp2;
-                    listenOptions.UseHttps(certificate);
-                });
+                    options.ListenLocalhost(httpsUri.Port, listenOptions =>
+                    {
+                        listenOptions.Protocols = HttpProtocols.Http1AndHttp2;
+                        listenOptions.UseHttps(certificate);
+                    });
+                    return; // If HTTPS configured successfully, skip HTTP fallback
+                }
             }
-            return; // If HTTPS configured, skip HTTP fallback
+            else
+            {
+                Console.WriteLine($"⚠️  TLS certificate not found at '{fullCertPath}' or key at '{fullKeyPath}'. Falling back to development certificate.");
+                builder.WebHost.UseSetting("Kestrel:Certificates:Default:Path", string.Empty);
+                builder.WebHost.UseSetting("Kestrel:Certificates:Default:KeyPath", string.Empty);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"⚠️  Failed to load TLS certificate from configuration. Falling back to development certificate. Reason: {ex.Message}");
+            builder.WebHost.UseSetting("Kestrel:Certificates:Default:Path", string.Empty);
+            builder.WebHost.UseSetting("Kestrel:Certificates:Default:KeyPath", string.Empty);
         }
     }
 
@@ -99,9 +124,8 @@ builder.WebHost.ConfigureKestrel(options =>
     }
     else
     {
-        // Production: HTTP on port 5000
-        var httpPort = 8080;
-        options.ListenLocalhost(httpPort, listenOptions =>
+        // PRODUCTION: luister op alles (Docker-proof)
+        options.ListenAnyIP(8080, listenOptions =>
         {
             listenOptions.Protocols = HttpProtocols.Http1AndHttp2;
         });
@@ -165,16 +189,44 @@ builder.Services.ConfigureApplicationCookie(options =>
 
 // Discord Authentication (only if configured)
 var discordClientId = builder.Configuration["Discord:ClientId"];
-if (!string.IsNullOrWhiteSpace(discordClientId))
+var discordClientSecret = builder.Configuration["Discord:ClientSecret"];
+if (!string.IsNullOrWhiteSpace(discordClientId) && !string.IsNullOrWhiteSpace(discordClientSecret))
 {
+    Console.WriteLine("🔐 Discord OAuth Configuration:");
+    Console.WriteLine($"   ClientId: {discordClientId}");
+    Console.WriteLine($"   ClientSecret: {(string.IsNullOrWhiteSpace(discordClientSecret) ? "❌ MISSING" : "✅ configured")}");
+    Console.WriteLine($"   CallbackPath: /signin-discord");
+    Console.WriteLine("⚠️  Make sure your Discord OAuth app has these redirect URIs registered:");
+    Console.WriteLine("   - https://localhost:7087/signin-discord");
+    Console.WriteLine("   - http://localhost:5041/signin-discord");
+    
     builder.Services.AddAuthentication().AddDiscord(options =>
     {
         options.ClientId = discordClientId;
-        options.ClientSecret = builder.Configuration["Discord:ClientSecret"] ?? string.Empty;
+        options.ClientSecret = discordClientSecret;
         options.Scope.Add("identify");
         options.Scope.Add("email");
         options.SaveTokens = false; // Disable unless required for token refresh
         options.CallbackPath = "/signin-discord";
+        
+        // Log the redirect URI that will be used
+        options.Events.OnRedirectToAuthorizationEndpoint = context =>
+        {
+            var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
+            var request = context.Request;
+            var scheme = request.Scheme; // http or https
+            var host = request.Host.Value; // localhost:7087 or localhost:5041
+            
+            // Build the redirect URI that Discord expects (this is what should be registered in Discord)
+            var redirectUri = $"{scheme}://{host}{options.CallbackPath}";
+            logger.LogInformation("Discord OAuth - Redirect URI being sent to Discord: {RedirectUri}", redirectUri);
+            logger.LogInformation("Discord OAuth - Make sure this exact URI is registered in your Discord OAuth app settings");
+            
+            // Continue with the default redirect behavior
+            context.Response.Redirect(context.RedirectUri);
+            return Task.CompletedTask;
+        };
+        
         options.Events.OnCreatingTicket = async context =>
         {
             var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
@@ -184,6 +236,7 @@ if (!string.IsNullOrWhiteSpace(discordClientId))
             if (context.Principal == null)
             {
                 logger.LogError("Principal is null in Discord authentication");
+                context.Fail("Principal is null");
                 return;
             }
 
@@ -192,32 +245,66 @@ if (!string.IsNullOrWhiteSpace(discordClientId))
             var email = context.Principal.FindFirst(ClaimTypes.Email)?.Value;
             var username = context.Principal.FindFirst(ClaimTypes.Name)?.Value;
 
-            if (!ulong.TryParse(discordIdStr, out var discordId))
+            if (string.IsNullOrWhiteSpace(discordIdStr) || !ulong.TryParse(discordIdStr, out var discordId))
             {
                 logger.LogError("Invalid Discord ID: {DiscordId}", discordIdStr);
+                context.Fail("Invalid Discord ID");
                 return;
             }
 
-            var user = await userManager.Users.FirstOrDefaultAsync(u => u.DiscordId == discordId);
-            if (user == null)
+            try
             {
-                user = new AppUser
+                var user = await userManager.Users.FirstOrDefaultAsync(u => u.DiscordId == discordId);
+                if (user == null)
                 {
-                    UserName = username ?? $"discord_{discordId}",
-                    Email = email ?? $"discord_{discordId}@example.com",
-                    DiscordId = discordId
-                };
+                    user = new AppUser
+                    {
+                        UserName = username ?? $"discord_{discordId}",
+                        Email = email ?? $"discord_{discordId}@example.com",
+                        DiscordId = discordId
+                    };
 
-                var result = await userManager.CreateAsync(user);
-                if (!result.Succeeded)
-                {
-                    logger.LogError("Failed to create user: {Errors}", string.Join(", ", result.Errors.Select(e => e.Description)));
-                    return;
+                    var result = await userManager.CreateAsync(user);
+                    if (!result.Succeeded)
+                    {
+                        logger.LogError("Failed to create user: {Errors}", string.Join(", ", result.Errors.Select(e => e.Description)));
+                        context.Fail($"Failed to create user: {string.Join(", ", result.Errors.Select(e => e.Description))}");
+                        return;
+                    }
                 }
-            }
 
-            await signInManager.SignInAsync(user, isPersistent: false);
-            logger.LogInformation("Discord user signed in: {DiscordId}", discordId);
+                await signInManager.SignInAsync(user, isPersistent: false);
+                logger.LogInformation("Discord user signed in: {DiscordId}", discordId);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error during Discord authentication");
+                context.Fail($"Authentication error: {ex.Message}");
+            }
+        };
+        
+        options.Events.OnRemoteFailure = context =>
+        {
+            var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
+            var configuration = context.HttpContext.RequestServices.GetRequiredService<IConfiguration>();
+            var frontendUrl = configuration["FrontendUrl"] ?? "http://localhost:3000";
+            
+            var errorMessage = context.Failure?.Message ?? "unknown_error";
+            logger.LogError("Discord OAuth remote failure: {Error}", errorMessage);
+            logger.LogError("Error details: {Details}", context.Failure?.ToString());
+            
+            // Log specific error details for debugging
+            if (errorMessage.Contains("invalid_client"))
+            {
+                logger.LogError("Invalid client error - Check your Discord ClientSecret and ensure redirect URI matches exactly");
+                logger.LogError("Expected redirect URI: {Scheme}://{Host}{CallbackPath}", 
+                    context.Request.Scheme, context.Request.Host.Value, options.CallbackPath);
+            }
+            
+            // Redirect to callback endpoint which will handle redirecting to frontend
+            context.Response.Redirect($"/api/Auth/callback?error={Uri.EscapeDataString(errorMessage)}");
+            context.HandleResponse();
+            return Task.CompletedTask;
         };
     });
 }
@@ -246,6 +333,7 @@ builder.Services.AddScoped<ClaimsPrincipal>(serviceProvider =>
 builder.Services.AddTransient<IHelperMethods, HelperMethods>();
 builder.Services.AddScoped<IAccountHandler, AccountHandler>();
 builder.Services.AddScoped<IBankHandler, BankHandler>();
+builder.Services.AddSingleton<IBotGrpcClient, BotGrpcClient>();
 
 var app = builder.Build();
 
@@ -265,15 +353,15 @@ using (var scope = app.Services.CreateScope())
 }
 
 // Middleware
-if (app.Environment.IsDevelopment())
-{
+// if (app.Environment.IsDevelopment())
+// {
     app.UseSwagger();
     app.UseSwaggerUI();
-}
-else
-{
-    app.UseHttpsRedirection();
-}
+// }
+// else
+// {
+//     app.UseHttpsRedirection();
+// }
 
 app.UseCors("AllowNextJs");
 app.UseStaticFiles();

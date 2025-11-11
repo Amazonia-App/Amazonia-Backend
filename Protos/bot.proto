@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package amazonia.bot;
+
+option csharp_namespace = "AmazoniaApi.Bot.Grpc";
+
+service BotService {
+  rpc SendMessageToChannel (SendMessageRequest) returns (SendMessageResponse);
+  rpc VerifyTicketMessages (VerifyTicketMessagesRequest) returns (VerifyTicketMessagesResponse);
+  rpc UpdateChannelPermissions (UpdateChannelPermissionsRequest) returns (UpdateChannelPermissionsResponse);
+}
+
+message SendMessageRequest {
+  string channel_id = 1;
+  string content = 2;
+  int32 database_message_id = 3;
+}
+
+message SendMessageResponse {
+  bool success = 1;
+  uint64 discord_message_id = 2;
+  string error_message = 3;
+}
+
+message VerifyTicketMessagesRequest {
+  string channel_id = 1;
+  repeated MessageToVerify messages = 2;
+}
+
+message MessageToVerify {
+  int32 database_message_id = 1;
+  uint64 discord_message_id = 2;
+  string content = 3;
+}
+
+message VerifyTicketMessagesResponse {
+  bool all_verified = 1;
+  repeated int32 missing_message_ids = 2;
+  repeated int32 mismatched_message_ids = 3;
+  string error_message = 4;
+}
+
+message UpdateChannelPermissionsRequest {
+  string channel_id = 1;
+  bool read_only = 2;
+}
+
+message UpdateChannelPermissionsResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
