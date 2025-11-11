@@ -10,5 +10,10 @@ public sealed class CreateTicketRequest
 
     [Required]
     public ulong DiscordUserId { get; set; }
+
+    [Required]
+    [MinLength(3)]
+    [MaxLength(30)]
+    public string Title { get; set; } = string.Empty;
 }
 

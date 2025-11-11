@@ -8,6 +8,9 @@ service BotService {
   rpc SendMessageToChannel (SendMessageRequest) returns (SendMessageResponse);
   rpc VerifyTicketMessages (VerifyTicketMessagesRequest) returns (VerifyTicketMessagesResponse);
   rpc UpdateChannelPermissions (UpdateChannelPermissionsRequest) returns (UpdateChannelPermissionsResponse);
+  rpc GetAllChannelMessages (GetAllChannelMessagesRequest) returns (GetAllChannelMessagesResponse);
+  rpc CreateTicketChannel (CreateTicketChannelRequest) returns (CreateTicketChannelResponse);
+  rpc MoveTicketChannelToCategory (MoveTicketChannelToCategoryRequest) returns (MoveTicketChannelToCategoryResponse);
 }
 
 message SendMessageRequest {
@@ -46,6 +49,45 @@ message UpdateChannelPermissionsRequest {
 }
 
 message UpdateChannelPermissionsResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message GetAllChannelMessagesRequest {
+  string channel_id = 1;
+}
+
+message DiscordMessageInfo {
+  uint64 discord_message_id = 1;
+  string content = 2;
+  uint64 author_discord_id = 3;
+  int64 timestamp = 4; // Unix timestamp in seconds
+}
+
+message GetAllChannelMessagesResponse {
+  bool success = 1;
+  repeated DiscordMessageInfo messages = 2;
+  string error_message = 3;
+}
+
+message CreateTicketChannelRequest {
+  uint64 discord_user_id = 1;
+  uint64 guild_id = 2; // Optional: if 0, bot will find a guild where user is a member
+  string title = 3; // Title for the ticket channel
+}
+
+message CreateTicketChannelResponse {
+  bool success = 1;
+  string channel_id = 2;
+  string error_message = 3;
+}
+
+message MoveTicketChannelToCategoryRequest {
+  string channel_id = 1;
+  string status = 2; // TicketStatus as string (e.g., "Closed", "Open", etc.)
+}
+
+message MoveTicketChannelToCategoryResponse {
   bool success = 1;
   string error_message = 2;
 }

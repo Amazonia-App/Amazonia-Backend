@@ -218,6 +218,144 @@ public class BotGrpcClient : IBotGrpcClient, IDisposable
         }
     }
 
+    public async Task<(bool success, List<(ulong discordMessageId, string content, ulong authorDiscordId, long timestamp)> messages, string? errorMessage)> GetAllChannelMessagesAsync(
+        string channelId,
+        CancellationToken cancellationToken = default)
+    {
+        var request = new GetAllChannelMessagesRequest
+        {
+            ChannelId = channelId,
+        };
+
+        try
+        {
+            _logger.LogInformation("Fetching all messages from channel {ChannelId}", channelId);
+
+            var response = await _client.GetAllChannelMessagesAsync(request, cancellationToken: cancellationToken);
+
+            if (!response.Success)
+            {
+                _logger.LogWarning(
+                    "Bot reported failure fetching messages from channel {ChannelId}. Error: {ErrorMessage}",
+                    channelId,
+                    response.ErrorMessage);
+                return (false, new List<(ulong, string, ulong, long)>(), response.ErrorMessage);
+            }
+
+            var messages = response.Messages
+                .Select(m => (m.DiscordMessageId, m.Content, m.AuthorDiscordId, m.Timestamp))
+                .ToList();
+
+            _logger.LogInformation(
+                "Fetched {MessageCount} messages from channel {ChannelId}",
+                messages.Count,
+                channelId);
+
+            return (true, messages, null);
+        }
+        catch (RpcException ex)
+        {
+            _logger.LogError(
+                ex,
+                "Error fetching messages from channel {ChannelId}",
+                channelId);
+
+            return (false, new List<(ulong, string, ulong, long)>(), ex.Message);
+        }
+    }
+
+    public async Task<(bool success, string? channelId, string? errorMessage)> CreateTicketChannelAsync(
+        ulong discordUserId,
+        string title,
+        CancellationToken cancellationToken = default)
+    {
+        var request = new CreateTicketChannelRequest
+        {
+            DiscordUserId = discordUserId,
+            Title = title ?? string.Empty,
+        };
+
+        try
+        {
+            _logger.LogInformation("Requesting bot to create ticket channel for Discord user {DiscordUserId}", discordUserId);
+
+            var response = await _client.CreateTicketChannelAsync(request, cancellationToken: cancellationToken);
+
+            if (response.Success)
+            {
+                _logger.LogInformation(
+                    "Bot created ticket channel {ChannelId} for Discord user {DiscordUserId}",
+                    response.ChannelId,
+                    discordUserId);
+                return (true, response.ChannelId, null);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Bot reported failure creating ticket channel for Discord user {DiscordUserId}. Error: {ErrorMessage}",
+                    discordUserId,
+                    response.ErrorMessage);
+                return (false, null, response.ErrorMessage);
+            }
+        }
+        catch (RpcException ex)
+        {
+            _logger.LogError(
+                ex,
+                "Error requesting bot to create ticket channel for Discord user {DiscordUserId}",
+                discordUserId);
+
+            return (false, null, ex.Message);
+        }
+    }
+
+    public async Task<(bool success, string? errorMessage)> MoveTicketChannelToCategoryAsync(
+        string channelId,
+        string status,
+        CancellationToken cancellationToken = default)
+    {
+        var request = new MoveTicketChannelToCategoryRequest
+        {
+            ChannelId = channelId,
+            Status = status,
+        };
+
+        try
+        {
+            _logger.LogInformation(
+                "Moving channel {ChannelId} to category based on status {Status}",
+                channelId,
+                status);
+
+            var response = await _client.MoveTicketChannelToCategoryAsync(request, cancellationToken: cancellationToken);
+
+            if (response.Success)
+            {
+                _logger.LogInformation(
+                    "Moved channel {ChannelId} to category",
+                    channelId);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Bot reported failure moving channel {ChannelId} to category. Error: {ErrorMessage}",
+                    channelId,
+                    response.ErrorMessage);
+            }
+
+            return (response.Success, response.ErrorMessage);
+        }
+        catch (RpcException ex)
+        {
+            _logger.LogError(
+                ex,
+                "Error moving channel {ChannelId} to category",
+                channelId);
+
+            return (false, ex.Message);
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed)

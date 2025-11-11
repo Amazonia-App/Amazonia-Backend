@@ -24,6 +24,24 @@ builder.Configuration
     .AddJsonFile($"appsettings.{builder.Environment.EnvironmentName}.json", optional: true, reloadOnChange: true)
     .AddEnvironmentVariables(prefix: "AMAZONIA_BOT_");
 
+// Log environment and configuration info
+var loggerFactory = LoggerFactory.Create(loggingBuilder => loggingBuilder.AddConsole().AddConfiguration(builder.Configuration.GetSection("Logging")));
+var tempLogger = loggerFactory.CreateLogger("Startup");
+tempLogger.LogInformation("Environment: {Environment}", builder.Environment.EnvironmentName);
+tempLogger.LogInformation("Content Root: {ContentRoot}", builder.Environment.ContentRootPath);
+tempLogger.LogInformation("Application Name: {AppName}", builder.Environment.ApplicationName);
+
+var botToken = builder.Configuration.GetValue<string>("Discord:BotToken");
+if (string.IsNullOrWhiteSpace(botToken))
+{
+    tempLogger.LogWarning("Discord:BotToken is empty or not found in configuration");
+}
+else
+{
+    var maskedToken = botToken.Length > 10 ? $"{botToken.Substring(0, 10)}...{botToken.Substring(botToken.Length - 4)}" : "***";
+    tempLogger.LogInformation("Discord:BotToken found (masked): {MaskedToken}", maskedToken);
+}
+
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 builder.Logging.AddConfiguration(builder.Configuration.GetSection("Logging"));
@@ -66,6 +84,7 @@ builder.Services.AddSingleton<ChannelPermissionManager>();
 builder.Services.AddSingleton<ApiClient>();
 builder.Services.AddSingleton<BotGrpcService>();
 builder.Services.AddTransient<AmazoniaApi.Bot.Modules.TicketModule>();
+builder.Services.AddSingleton<AmazoniaApi.Bot.Modules.StatusAutocompleteHandler>();
 builder.Services.AddHostedService<DiscordBotService>();
 
 builder.Services.AddGrpc();

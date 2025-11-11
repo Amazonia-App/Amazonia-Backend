@@ -18,14 +18,8 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddLogging(logging =>
 {
     logging.AddConsole();
-    if (builder.Environment.IsDevelopment())
-    {
-        logging.SetMinimumLevel(LogLevel.Debug);
-    }
-    else
-    {
-        logging.SetMinimumLevel(LogLevel.Information);
-    }
+    // Set minimum level to Information to disable Debug logs
+    logging.SetMinimumLevel(LogLevel.Information);
 });
 
 // Configuration

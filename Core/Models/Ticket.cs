@@ -10,4 +10,6 @@ public class Ticket
     public List<Message> Messages { get; set; } = new List<Message>(); // Initialize to avoid null
     public string? CreatorId { get; set; } = string.Empty; // Property for navigation
     public TicketStatus Status { get; set; } // Property for enum
+    [MaxLength(30)]
+    public string Title { get; set; } = string.Empty; // Title of the ticket
 }

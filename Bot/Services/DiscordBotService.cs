@@ -1,6 +1,7 @@
 using System.Linq;
 using System.Reflection;
 using AmazoniaApi.Bot.Modules;
+using AmazoniaApi.Core.Models;
 using Discord;
 using Discord.Interactions;
 using Discord.WebSocket;
@@ -60,6 +61,11 @@ public class DiscordBotService : BackgroundService
             return;
         }
 
+        // Log masked token for debugging
+        var maskedToken = token.Length > 10 ? $"{token.Substring(0, 10)}...{token.Substring(token.Length - 4)}" : "***";
+        _logger.LogInformation("Attempting to login with bot token (masked): {MaskedToken}", maskedToken);
+        _logger.LogInformation("Token length: {Length} characters", token.Length);
+
         try
         {
             await _client.LoginAsync(TokenType.Bot, token);
@@ -93,12 +99,14 @@ public class DiscordBotService : BackgroundService
     {
         _client.Ready += OnClientReadyAsync;
         _client.InteractionCreated += OnInteractionCreatedAsync;
+        _client.AutocompleteExecuted += OnAutocompleteExecutedAsync;
         _client.MessageReceived += OnMessageReceivedAsync;
         _client.Connected += OnConnectedAsync;
         _client.Disconnected += OnDisconnectedAsync;
         _client.LoggedIn += OnLoggedInAsync;
         _interactionService.Log += OnInteractionLogAsync;
         _interactionService.SlashCommandExecuted += OnSlashCommandExecutedAsync;
+        _interactionService.AutocompleteCommandExecuted += OnAutocompleteCommandExecutedAsync;
     }
 
     private async Task OnClientReadyAsync()
@@ -108,6 +116,25 @@ public class DiscordBotService : BackgroundService
             _logger.LogInformation("Discord client ready. Loading interaction modules...");
 
             await _interactionService.AddModulesAsync(Assembly.GetExecutingAssembly(), _serviceProvider);
+            
+            // Log command details to verify autocomplete is registered
+            var updateStatusCommand = _interactionService.SlashCommands.FirstOrDefault(c => c.Name == "update-status");
+            if (updateStatusCommand != null)
+            {
+                _logger.LogInformation("Found update-status command with {ParameterCount} parameters", updateStatusCommand.Parameters.Count);
+                foreach (var param in updateStatusCommand.Parameters)
+                {
+                    _logger.LogInformation("  Parameter: {Name}, Type: {Type}, HasAutocomplete: {HasAutocomplete}", 
+                        param.Name, 
+                        param.ParameterType.Name,
+                        param.IsAutocomplete);
+                }
+            }
+            else
+            {
+                _logger.LogWarning("update-status command not found in registered commands");
+            }
+            
             var loadedModuleCount = _interactionService.Modules.Count;
             _logger.LogInformation("Interaction modules loaded: {ModuleCount}", loadedModuleCount);
 
@@ -187,6 +214,12 @@ public class DiscordBotService : BackgroundService
 
     private async Task OnInteractionCreatedAsync(SocketInteraction interaction)
     {
+        // Skip autocomplete interactions - they're handled separately by OnAutocompleteExecutedAsync
+        if (interaction is SocketAutocompleteInteraction)
+        {
+            return;
+        }
+
         // Check if we've already processed this interaction
         lock (_processedInteractionsLock)
         {
@@ -215,6 +248,7 @@ public class DiscordBotService : BackgroundService
                 SocketSlashCommand slashCommandInteraction => slashCommandInteraction.CommandName,
                 SocketUserCommand userCommand => userCommand.CommandName,
                 SocketMessageCommand messageCommand => messageCommand.CommandName,
+                SocketAutocompleteInteraction autocompleteInteraction => autocompleteInteraction.Data.CommandName,
                 _ => (interaction.Data as IApplicationCommandInteractionData)?.Name
             };
             var commandLogName = commandName ?? $"unknown (InteractionId: {interaction.Id})";
@@ -397,7 +431,15 @@ public class DiscordBotService : BackgroundService
             
             if (result.IsSuccess)
             {
-                _logger.LogInformation("Slash command {CommandName} executed successfully. Handler responded: {HasResponded}. ErrorReason={ErrorReason}", commandLogName, interaction.HasResponded, result.ErrorReason ?? "none");
+                // For autocomplete interactions, the handler responds automatically
+                if (interaction is SocketAutocompleteInteraction)
+                {
+                    _logger.LogInformation("Autocomplete interaction {InteractionId} handled successfully.", interaction.Id);
+                }
+                else
+                {
+                    _logger.LogInformation("Slash command {CommandName} executed successfully. Handler responded: {HasResponded}. ErrorReason={ErrorReason}", commandLogName, interaction.HasResponded, result.ErrorReason ?? "none");
+                }
                 
                 // If interaction was responded to, remove from executing set
                 if (interaction.HasResponded)
@@ -475,6 +517,205 @@ public class DiscordBotService : BackgroundService
         }
     }
 
+    private async Task OnAutocompleteExecutedAsync(SocketAutocompleteInteraction interaction)
+    {
+        _logger.LogInformation("=== AUTCOMPLETE EXECUTED START ===");
+        _logger.LogInformation("AutocompleteExecuted event received for command {CommandName}, parameter {ParameterName}", 
+            interaction.Data.CommandName, 
+            interaction.Data.Current.Name);
+        _logger.LogInformation("Interaction ID: {InteractionId}, HasResponded: {HasResponded}", 
+            interaction.Id, 
+            interaction.HasResponded);
+        
+        try
+        {
+            var context = new SocketInteractionContext(_client, interaction);
+            _logger.LogInformation("Created interaction context");
+            
+            using var scope = _serviceProvider.CreateScope();
+            _logger.LogInformation("Created service scope");
+            
+            // Try to manually invoke the handler if ExecuteCommandAsync doesn't work
+            if (interaction.Data.CommandName == "update-status" && interaction.Data.Current.Name == "status")
+            {
+                _logger.LogInformation("Manually invoking StatusAutocompleteHandler for update-status command");
+                try
+                {
+                    var handler = new StatusAutocompleteHandler();
+                    var parameter = _interactionService.SlashCommands
+                        .FirstOrDefault(c => c.Name == "update-status")
+                        ?.Parameters
+                        .FirstOrDefault(p => p.Name == "status");
+                    
+                    if (parameter != null)
+                    {
+                        _logger.LogInformation("Found parameter info, calling GenerateSuggestionsAsync");
+                        var autocompleteResult = await handler.GenerateSuggestionsAsync(
+                            context,
+                            interaction,
+                            parameter,
+                            scope.ServiceProvider);
+                        
+                        if (autocompleteResult.IsSuccess)
+                        {
+                            // Extract choices from the result - we need to generate them ourselves
+                            // Since AutocompletionResult doesn't expose choices, we'll generate them directly
+                            var ticketChannelCache = scope.ServiceProvider.GetRequiredService<TicketChannelCache>();
+                            var channelId = context.Channel?.Id ?? 0;
+                            
+                            var statusNames = Enum.GetNames<TicketStatus>();
+                            var userInput = interaction.Data.Current.Value as string ?? "";
+                            
+                            var choices = statusNames
+                                .Where(name => name.Contains(userInput, StringComparison.OrdinalIgnoreCase))
+                                .Select(name => new AutocompleteResult(name, name))
+                                .Take(25)
+                                .ToList();
+                            
+                            if (string.IsNullOrWhiteSpace(userInput) || choices.Count == statusNames.Length)
+                            {
+                                choices = statusNames
+                                    .Select(name => new AutocompleteResult(name, name))
+                                    .Take(25)
+                                    .ToList();
+                            }
+                            
+                            _logger.LogInformation("Handler returned success, responding with {Count} choices", choices.Count);
+                            await interaction.RespondAsync(choices.ToArray());
+                            _logger.LogInformation("Successfully responded to autocomplete interaction");
+                            return;
+                        }
+                        else
+                        {
+                            _logger.LogWarning("Handler returned error: {Error}", autocompleteResult.ErrorReason);
+                        }
+                    }
+                }
+                catch (Exception handlerEx)
+                {
+                    _logger.LogError(handlerEx, "Exception while manually invoking handler: {Message}", handlerEx.Message);
+                }
+            }
+            
+            _logger.LogInformation("Calling ExecuteCommandAsync...");
+            var result = await _interactionService.ExecuteCommandAsync(context, scope.ServiceProvider);
+            _logger.LogInformation("ExecuteCommandAsync completed. Success: {Success}, Error: {Error}, Reason: {Reason}", 
+                result.IsSuccess, 
+                result.Error, 
+                result.ErrorReason);
+            
+            if (result is ExecuteResult executeResult && executeResult.Exception != null)
+            {
+                _logger.LogError(executeResult.Exception, "ExecuteResult contains exception: {ExceptionType}", executeResult.Exception.GetType().Name);
+            }
+            
+            if (!result.IsSuccess)
+            {
+                _logger.LogWarning("Autocomplete execution failed: {Error} {Reason}", result.Error, result.ErrorReason);
+                
+                // If execution failed, try to respond with empty results to prevent "Loading Options Failed"
+                if (!interaction.HasResponded)
+                {
+                    try
+                    {
+                        _logger.LogInformation("Attempting to respond with empty results...");
+                        await interaction.RespondAsync(Array.Empty<AutocompleteResult>());
+                        _logger.LogInformation("Successfully responded to autocomplete with empty results after failure");
+                    }
+                    catch (Exception respondEx)
+                    {
+                        _logger.LogError(respondEx, "Failed to respond to autocomplete interaction after execution failure: {Message}", respondEx.Message);
+                    }
+                }
+                else
+                {
+                    _logger.LogInformation("Interaction already responded, skipping fallback response");
+                }
+            }
+            else
+            {
+                _logger.LogInformation("Autocomplete executed successfully for command {CommandName}. HasResponded: {HasResponded}", 
+                    interaction.Data.CommandName, 
+                    interaction.HasResponded);
+                
+                // If ExecuteCommandAsync succeeded but didn't respond, manually respond
+                if (!interaction.HasResponded)
+                {
+                    _logger.LogWarning("ExecuteCommandAsync succeeded but interaction was not responded to. Manually invoking handler...");
+                    try
+                    {
+                        var handler = new StatusAutocompleteHandler();
+                        var parameter = _interactionService.SlashCommands
+                            .FirstOrDefault(c => c.Name == "update-status")
+                            ?.Parameters
+                            .FirstOrDefault(p => p.Name == "status");
+                        
+                        if (parameter != null)
+                        {
+                            var autocompleteResult = await handler.GenerateSuggestionsAsync(
+                                context,
+                                interaction,
+                                parameter,
+                                scope.ServiceProvider);
+                            
+                            if (autocompleteResult.IsSuccess)
+                            {
+                                // Generate choices directly since AutocompletionResult doesn't expose them
+                                var ticketChannelCache = scope.ServiceProvider.GetRequiredService<TicketChannelCache>();
+                                var statusNames = Enum.GetNames<TicketStatus>();
+                                var userInput = interaction.Data.Current.Value as string ?? "";
+                                
+                                var choices = statusNames
+                                    .Where(name => name.Contains(userInput, StringComparison.OrdinalIgnoreCase))
+                                    .Select(name => new AutocompleteResult(name, name))
+                                    .Take(25)
+                                    .ToList();
+                                
+                                if (string.IsNullOrWhiteSpace(userInput) || choices.Count == statusNames.Length)
+                                {
+                                    choices = statusNames
+                                        .Select(name => new AutocompleteResult(name, name))
+                                        .Take(25)
+                                        .ToList();
+                                }
+                                
+                                await interaction.RespondAsync(choices.ToArray());
+                                _logger.LogInformation("Successfully responded to autocomplete after manual handler invocation");
+                            }
+                        }
+                    }
+                    catch (Exception manualEx)
+                    {
+                        _logger.LogError(manualEx, "Failed to manually respond to autocomplete: {Message}", manualEx.Message);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Exception while executing autocomplete interaction: {Message}, StackTrace: {StackTrace}", 
+                ex.Message, 
+                ex.StackTrace);
+            
+            // Try to respond with empty results to prevent "Loading Options Failed"
+            if (!interaction.HasResponded)
+            {
+                try
+                {
+                    _logger.LogInformation("Attempting to respond with empty results after exception...");
+                    await interaction.RespondAsync(Array.Empty<AutocompleteResult>());
+                    _logger.LogInformation("Successfully responded to autocomplete with empty results after exception");
+                }
+                catch (Exception respondEx)
+                {
+                    _logger.LogError(respondEx, "Failed to respond to autocomplete interaction after exception: {Message}", respondEx.Message);
+                }
+            }
+        }
+        
+        _logger.LogInformation("=== AUTCOMPLETE EXECUTED END ===");
+    }
+
     private async Task OnMessageReceivedAsync(SocketMessage rawMessage)
     {
         if (rawMessage.Source != MessageSource.User)
@@ -533,6 +774,13 @@ public class DiscordBotService : BackgroundService
 
     private Task OnInteractionLogAsync(LogMessage message)
     {
+        // Filter out harmless null reference warnings from Discord.Net internals
+        if (message.Message != null && message.Message.Contains("App Commands: (null)", StringComparison.OrdinalIgnoreCase))
+        {
+            // Suppress this specific message as it's a harmless internal Discord.Net log
+            return Task.CompletedTask;
+        }
+
         _logger.Log(MapLogSeverity(message.Severity), "{Source}: {Message}", message.Source, message.Message);
         return Task.CompletedTask;
     }
@@ -581,6 +829,32 @@ public class DiscordBotService : BackgroundService
         {
             _logger.LogWarning("Slash command {CommandName} failed for user {UserId} in guild {GuildId}: {Error} {Reason}",
                 command.Name,
+                context.User.Id,
+                context.Guild?.Id ?? 0,
+                result.Error,
+                result.ErrorReason);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private Task OnAutocompleteCommandExecutedAsync(AutocompleteCommandInfo command, IInteractionContext context, IResult result)
+    {
+        _logger.LogInformation("=== OnAutocompleteCommandExecutedAsync CALLED ===");
+        _logger.LogInformation("Command: {CommandName}, Parameter: {ParameterName}", command.CommandName, command.ParameterName);
+        
+        if (result.IsSuccess)
+        {
+            _logger.LogInformation("Autocomplete command executed: {CommandName} (parameter {ParameterName}) by {UserId} in guild {GuildId}", 
+                command.CommandName, 
+                command.ParameterName, 
+                context.User.Id, 
+                (context.Guild?.Id ?? 0));
+        }
+        else
+        {
+            _logger.LogWarning("Autocomplete command {CommandName} failed for user {UserId} in guild {GuildId}: {Error} {Reason}",
+                command.CommandName,
                 context.User.Id,
                 context.Guild?.Id ?? 0,
                 result.Error,

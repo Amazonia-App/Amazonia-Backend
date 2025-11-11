@@ -34,12 +34,13 @@ public sealed class ApiClient
         return client;
     }
 
-    public async Task CreateTicketAsync(string channelId, ulong discordUserId, CancellationToken cancellationToken = default)
+    public async Task CreateTicketAsync(string channelId, ulong discordUserId, string title, CancellationToken cancellationToken = default)
     {
         var request = new CreateTicketRequest
         {
             ChannelId = channelId,
-            DiscordUserId = discordUserId
+            DiscordUserId = discordUserId,
+            Title = title
         };
 
         using var client = CreateClient();
@@ -122,6 +123,49 @@ public sealed class ApiClient
         }
 
         return tickets;
+    }
+
+    public async Task<TicketInfo?> GetTicketInfoAsync(string channelId, CancellationToken cancellationToken = default)
+    {
+        using var client = CreateClient();
+
+        var response = await client.GetAsync($"/api/Ticket/Bot/GetTicketInfo/{channelId}", cancellationToken);
+        
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+
+        await EnsureSuccessAsync(response, "retrieve ticket info");
+
+        var data = await response.Content.ReadFromJsonAsync<BotTicketSummary>(SerializerOptions, cancellationToken);
+        if (data is null)
+        {
+            return null;
+        }
+
+        if (!ulong.TryParse(data.ChannelId, out var parsedChannelId))
+        {
+            _logger.LogWarning("Received ticket summary with invalid channel ID: {ChannelId}", data.ChannelId);
+            return null;
+        }
+
+        return new TicketInfo(parsedChannelId, data.CreatorDiscordId, data.Status);
+    }
+
+    public async Task UpdateTicketStatusAsync(string channelId, TicketStatus status, CancellationToken cancellationToken = default)
+    {
+        var request = new Models.UpdateTicketStatusRequest
+        {
+            ChannelId = channelId,
+            Status = status
+        };
+
+        using var client = CreateClient();
+        _logger.LogInformation("Updating ticket status for channel {ChannelId} to {Status}", channelId, status);
+
+        var response = await client.PutAsJsonAsync("/api/Ticket/Bot/UpdateStatus", request, SerializerOptions, cancellationToken);
+        await EnsureSuccessAsync(response, "update ticket status");
     }
 
     private async Task EnsureSuccessAsync(HttpResponseMessage response, string context)

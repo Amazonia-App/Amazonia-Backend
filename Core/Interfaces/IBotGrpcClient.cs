@@ -21,4 +21,18 @@ public interface IBotGrpcClient
         string channelId,
         bool readOnly,
         CancellationToken cancellationToken = default);
+
+    Task<(bool success, List<(ulong discordMessageId, string content, ulong authorDiscordId, long timestamp)> messages, string? errorMessage)> GetAllChannelMessagesAsync(
+        string channelId,
+        CancellationToken cancellationToken = default);
+
+    Task<(bool success, string? channelId, string? errorMessage)> CreateTicketChannelAsync(
+        ulong discordUserId,
+        string title,
+        CancellationToken cancellationToken = default);
+
+    Task<(bool success, string? errorMessage)> MoveTicketChannelToCategoryAsync(
+        string channelId,
+        string status,
+        CancellationToken cancellationToken = default);
 }
