@@ -19,22 +19,23 @@ namespace AmazoniaApi.Server.Controllers
         [HttpGet("login")]
         public IActionResult Login([FromQuery] string returnUrl = null)
         {
-            var redirectUrl = Url.Action("DiscordCallback", "Auth");
-            var properties = new AuthenticationProperties { RedirectUri = redirectUrl };
-
-            return Challenge(properties, "Discord"); // "Discord" must match your OAuth scheme name
+            // Get frontend URL from configuration for final redirect
+            var frontendUrl = configuration["FrontendUrl"] ?? "http://localhost:3000";
+            var callbackUrl = Url.Action("DiscordCallback", "Auth", null, Request.Scheme, Request.Host.Value);
+            
+            var properties = new AuthenticationProperties 
+            { 
+                RedirectUri = callbackUrl,
+                AllowRefresh = false
+            };
+            
+            logger.LogDebug("Initiating Discord OAuth login. Callback URL: {CallbackUrl}", callbackUrl);
+            return Challenge(properties, "Discord");
         }
 
         [HttpGet("callback")]
-        public async Task<IActionResult> DiscordCallback([FromQuery] string? returnUrl = null)
+        public async Task<IActionResult> DiscordCallback([FromQuery] string? returnUrl = null, [FromQuery] string? error = null)
         {
-            var result = await HttpContext.AuthenticateAsync(IdentityConstants.ExternalScheme);
-
-            if (!result.Succeeded)
-            {
-                return Redirect("/login?error=external_login_failed");
-            }
-
             // Get frontend URL from configuration
             var frontendUrl = configuration["FrontendUrl"];
             if (string.IsNullOrWhiteSpace(frontendUrl))
@@ -43,8 +44,27 @@ namespace AmazoniaApi.Server.Controllers
                 return StatusCode(500, new { message = "Frontend URL not configured" });
             }
 
+            // If there's an error parameter, redirect to frontend with error
+            if (!string.IsNullOrWhiteSpace(error))
+            {
+                logger.LogWarning("Discord OAuth callback error: {Error}", error);
+                var errorRedirect = $"{frontendUrl}?error={Uri.EscapeDataString(error)}";
+                return Redirect(errorRedirect);
+            }
+
+            var result = await HttpContext.AuthenticateAsync(IdentityConstants.ExternalScheme);
+
+            if (!result.Succeeded)
+            {
+                logger.LogWarning("External authentication failed: {Failure}", result.Failure?.Message);
+                var errorMessage = result.Failure?.Message ?? "external_login_failed";
+                var errorRedirect = $"{frontendUrl}?error={Uri.EscapeDataString(errorMessage)}";
+                return Redirect(errorRedirect);
+            }
+
             // User creation and sign-in is handled in OnCreatingTicket
             // Redirect to the configured frontend URL
+            logger.LogInformation("Discord OAuth callback successful, redirecting to frontend");
             return Redirect(frontendUrl);
         }
         

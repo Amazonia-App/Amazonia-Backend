@@ -78,7 +78,7 @@ builder.WebHost.ConfigureKestrel(options =>
             {
                 var certificate = X509Certificate2.CreateFromPemFile(fullCertPath, fullKeyPath);
                 certificate = new X509Certificate2(certificate.Export(X509ContentType.Pfx));
-                var httpsUrl = builder.Configuration["Kestrel:Endpoints:Https:Url"] ?? "https://localhost:7088";
+                var httpsUrl = builder.Configuration["Kestrel:Endpoints:Https:Url"] ?? "https://localhost:7087";
                 if (Uri.TryCreate(httpsUrl, UriKind.Absolute, out var httpsUri))
                 {
                     options.ListenLocalhost(httpsUri.Port, listenOptions =>
@@ -107,8 +107,8 @@ builder.WebHost.ConfigureKestrel(options =>
     // Fallback: HTTPS in development, HTTP otherwise
     if (builder.Environment.IsDevelopment())
     {
-        // Use HTTPS with development certificate on port 7088
-        var httpsPort = 7088;
+        // Use HTTPS with development certificate on port 7087
+        var httpsPort = 7087;
         options.ListenLocalhost(httpsPort, listenOptions =>
         {
             listenOptions.Protocols = HttpProtocols.Http1AndHttp2;
@@ -189,16 +189,44 @@ builder.Services.ConfigureApplicationCookie(options =>
 
 // Discord Authentication (only if configured)
 var discordClientId = builder.Configuration["Discord:ClientId"];
-if (!string.IsNullOrWhiteSpace(discordClientId))
+var discordClientSecret = builder.Configuration["Discord:ClientSecret"];
+if (!string.IsNullOrWhiteSpace(discordClientId) && !string.IsNullOrWhiteSpace(discordClientSecret))
 {
+    Console.WriteLine("🔐 Discord OAuth Configuration:");
+    Console.WriteLine($"   ClientId: {discordClientId}");
+    Console.WriteLine($"   ClientSecret: {(string.IsNullOrWhiteSpace(discordClientSecret) ? "❌ MISSING" : "✅ configured")}");
+    Console.WriteLine($"   CallbackPath: /signin-discord");
+    Console.WriteLine("⚠️  Make sure your Discord OAuth app has these redirect URIs registered:");
+    Console.WriteLine("   - https://localhost:7087/signin-discord");
+    Console.WriteLine("   - http://localhost:5041/signin-discord");
+    
     builder.Services.AddAuthentication().AddDiscord(options =>
     {
         options.ClientId = discordClientId;
-        options.ClientSecret = builder.Configuration["Discord:ClientSecret"] ?? string.Empty;
+        options.ClientSecret = discordClientSecret;
         options.Scope.Add("identify");
         options.Scope.Add("email");
         options.SaveTokens = false; // Disable unless required for token refresh
         options.CallbackPath = "/signin-discord";
+        
+        // Log the redirect URI that will be used
+        options.Events.OnRedirectToAuthorizationEndpoint = context =>
+        {
+            var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
+            var request = context.Request;
+            var scheme = request.Scheme; // http or https
+            var host = request.Host.Value; // localhost:7087 or localhost:5041
+            
+            // Build the redirect URI that Discord expects (this is what should be registered in Discord)
+            var redirectUri = $"{scheme}://{host}{options.CallbackPath}";
+            logger.LogInformation("Discord OAuth - Redirect URI being sent to Discord: {RedirectUri}", redirectUri);
+            logger.LogInformation("Discord OAuth - Make sure this exact URI is registered in your Discord OAuth app settings");
+            
+            // Continue with the default redirect behavior
+            context.Response.Redirect(context.RedirectUri);
+            return Task.CompletedTask;
+        };
+        
         options.Events.OnCreatingTicket = async context =>
         {
             var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
@@ -208,6 +236,7 @@ if (!string.IsNullOrWhiteSpace(discordClientId))
             if (context.Principal == null)
             {
                 logger.LogError("Principal is null in Discord authentication");
+                context.Fail("Principal is null");
                 return;
             }
 
@@ -216,32 +245,66 @@ if (!string.IsNullOrWhiteSpace(discordClientId))
             var email = context.Principal.FindFirst(ClaimTypes.Email)?.Value;
             var username = context.Principal.FindFirst(ClaimTypes.Name)?.Value;
 
-            if (!ulong.TryParse(discordIdStr, out var discordId))
+            if (string.IsNullOrWhiteSpace(discordIdStr) || !ulong.TryParse(discordIdStr, out var discordId))
             {
                 logger.LogError("Invalid Discord ID: {DiscordId}", discordIdStr);
+                context.Fail("Invalid Discord ID");
                 return;
             }
 
-            var user = await userManager.Users.FirstOrDefaultAsync(u => u.DiscordId == discordId);
-            if (user == null)
+            try
             {
-                user = new AppUser
+                var user = await userManager.Users.FirstOrDefaultAsync(u => u.DiscordId == discordId);
+                if (user == null)
                 {
-                    UserName = username ?? $"discord_{discordId}",
-                    Email = email ?? $"discord_{discordId}@example.com",
-                    DiscordId = discordId
-                };
+                    user = new AppUser
+                    {
+                        UserName = username ?? $"discord_{discordId}",
+                        Email = email ?? $"discord_{discordId}@example.com",
+                        DiscordId = discordId
+                    };
 
-                var result = await userManager.CreateAsync(user);
-                if (!result.Succeeded)
-                {
-                    logger.LogError("Failed to create user: {Errors}", string.Join(", ", result.Errors.Select(e => e.Description)));
-                    return;
+                    var result = await userManager.CreateAsync(user);
+                    if (!result.Succeeded)
+                    {
+                        logger.LogError("Failed to create user: {Errors}", string.Join(", ", result.Errors.Select(e => e.Description)));
+                        context.Fail($"Failed to create user: {string.Join(", ", result.Errors.Select(e => e.Description))}");
+                        return;
+                    }
                 }
-            }
 
-            await signInManager.SignInAsync(user, isPersistent: false);
-            logger.LogInformation("Discord user signed in: {DiscordId}", discordId);
+                await signInManager.SignInAsync(user, isPersistent: false);
+                logger.LogInformation("Discord user signed in: {DiscordId}", discordId);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error during Discord authentication");
+                context.Fail($"Authentication error: {ex.Message}");
+            }
+        };
+        
+        options.Events.OnRemoteFailure = context =>
+        {
+            var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
+            var configuration = context.HttpContext.RequestServices.GetRequiredService<IConfiguration>();
+            var frontendUrl = configuration["FrontendUrl"] ?? "http://localhost:3000";
+            
+            var errorMessage = context.Failure?.Message ?? "unknown_error";
+            logger.LogError("Discord OAuth remote failure: {Error}", errorMessage);
+            logger.LogError("Error details: {Details}", context.Failure?.ToString());
+            
+            // Log specific error details for debugging
+            if (errorMessage.Contains("invalid_client"))
+            {
+                logger.LogError("Invalid client error - Check your Discord ClientSecret and ensure redirect URI matches exactly");
+                logger.LogError("Expected redirect URI: {Scheme}://{Host}{CallbackPath}", 
+                    context.Request.Scheme, context.Request.Host.Value, options.CallbackPath);
+            }
+            
+            // Redirect to callback endpoint which will handle redirecting to frontend
+            context.Response.Redirect($"/api/Auth/callback?error={Uri.EscapeDataString(errorMessage)}");
+            context.HandleResponse();
+            return Task.CompletedTask;
         };
     });
 }
